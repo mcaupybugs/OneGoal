@@ -3,6 +3,7 @@
     "name": "OneGoal",
     "slug": "one-goal",
     "version": "1.0.0",
+    "scheme": "onegoal",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "splash": {
@@ -13,11 +14,25 @@
       "**/*"
     ],
     "ios": {
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      },
       "supportsTablet": true,
       "bundleIdentifier": "com.onegoal.app"
     },
     "android": {
-      "package": "com.onegoal.app"
-    }
+      "package": "com.onegoal.app",
+      "versionCode": 2
+    },
+    "extra": {
+      "eas": {
+        "projectId": "3bd31e68-48bb-4058-b641-2a2f3fb26d08"
+      }
+    },
+    "owner": "ivishalydv",
+    "plugins": [
+      "expo-web-browser",
+      "expo-secure-store"
+    ]
   }
 }
