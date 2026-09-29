@@ -347,8 +347,8 @@ export default function App() {
     activeRecord.incomeEntries.find((entry: IncomeEntry) => entry.id === selectedIncomeId) ?? null;
   const selectedSpendingEntry =
     activeRecord.spendingEntries.find((entry: SpendingEntry) => entry.id === selectedSpendingId) ?? null;
-  const formatMoney = (value: number) => formatMoneyForCurrency(value, selectedCurrency);
-  const formatHourly = (value: number) => formatHourlyForCurrency(value, selectedCurrency);
+  const displayMoney = (value: number) => formatMoneyForCurrency(value, selectedCurrency);
+  const displayHourly = (value: number) => formatHourlyForCurrency(value, selectedCurrency);
 
   const updateMonthRecord = (updater: (record: MonthRecord) => MonthRecord) => {
     setRecords((current: Records) => ({
@@ -608,25 +608,25 @@ export default function App() {
       <View style={styles.metricGrid}>
         <View style={[styles.card, styles.metricCard, styles.tiltLeft]}>
           <Text style={styles.metricLabel}>Monthly Inflow</Text>
-          <Text style={styles.metricValue}>{formatMoney(activeSnapshot.gross)}</Text>
+          <Text style={styles.metricValue}>{displayMoney(activeSnapshot.gross)}</Text>
           <Text style={styles.metricHint}>All income sources combined</Text>
         </View>
 
         <View style={[styles.card, styles.metricCard, styles.tiltRight]}>
           <Text style={styles.metricLabel}>Monthly Outflow</Text>
-          <Text style={styles.metricValue}>{formatMoney(activeSnapshot.spending)}</Text>
+          <Text style={styles.metricValue}>{displayMoney(activeSnapshot.spending)}</Text>
           <Text style={styles.metricHint}>What went out this month</Text>
         </View>
 
         <View style={[styles.card, styles.metricCard, styles.tiltRight]}>
           <Text style={styles.metricLabel}>Combined Gross / hr</Text>
-          <Text style={styles.metricValue}>{formatHourly(activeSnapshot.grossHourly)}</Text>
+          <Text style={styles.metricValue}>{displayHourly(activeSnapshot.grossHourly)}</Text>
           <Text style={styles.metricHint}>Before outflow is deducted</Text>
         </View>
 
         <View style={[styles.card, styles.metricCard, styles.tiltLeft]}>
           <Text style={styles.metricLabel}>Combined Net / hr</Text>
-          <Text style={styles.metricValue}>{formatHourly(activeSnapshot.netHourly)}</Text>
+          <Text style={styles.metricValue}>{displayHourly(activeSnapshot.netHourly)}</Text>
           <Text style={styles.metricHint}>After outflow is deducted</Text>
         </View>
       </View>
@@ -636,15 +636,15 @@ export default function App() {
         <View style={styles.scoreRow}>
           <View style={styles.scoreItem}>
             <Text style={styles.scoreLabel}>Salary</Text>
-            <Text style={styles.scoreValue}>{formatMoney(activeSnapshot.salaryIncome)}</Text>
+            <Text style={styles.scoreValue}>{displayMoney(activeSnapshot.salaryIncome)}</Text>
           </View>
           <View style={styles.scoreItem}>
             <Text style={styles.scoreLabel}>Side Business</Text>
-            <Text style={styles.scoreValue}>{formatMoney(activeSnapshot.sideBusinessIncome)}</Text>
+            <Text style={styles.scoreValue}>{displayMoney(activeSnapshot.sideBusinessIncome)}</Text>
           </View>
           <View style={styles.scoreItem}>
             <Text style={styles.scoreLabel}>Net</Text>
-            <Text style={styles.scoreValue}>{formatMoney(activeSnapshot.net)}</Text>
+            <Text style={styles.scoreValue}>{displayMoney(activeSnapshot.net)}</Text>
           </View>
           <View style={styles.scoreItem}>
             <Text style={styles.scoreLabel}>Tracked Hours</Text>
@@ -754,7 +754,7 @@ export default function App() {
             {selectedIncomeEntry ? (
               <>
                 <Text style={styles.focusText}>
-                  Current amount: {formatMoney(selectedIncomeEntry.amount)}
+                  Current amount: {displayMoney(selectedIncomeEntry.amount)}
                 </Text>
                 <Text style={styles.focusText}>
                   Current hours / day: {selectedIncomeEntry.hoursPerDay}
@@ -826,7 +826,7 @@ export default function App() {
           <Text style={styles.focusTitle}>{selectedSpendingEntry?.title ?? spendingTitle}</Text>
           {selectedSpendingEntry ? (
             <Text style={styles.focusText}>
-              Current amount: {formatMoney(selectedSpendingEntry.amount)}
+              Current amount: {displayMoney(selectedSpendingEntry.amount)}
             </Text>
           ) : null}
         </View>
@@ -860,7 +860,7 @@ export default function App() {
       <View style={[styles.card, styles.listCard]}>
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>INCOME DETAILS</Text>
-          <Text style={styles.sectionTotal}>{formatMoney(activeSnapshot.gross)}</Text>
+          <Text style={styles.sectionTotal}>{displayMoney(activeSnapshot.gross)}</Text>
         </View>
         {activeRecord.incomeEntries.length === 0 ? (
           <Text style={styles.emptyText}>No income sources yet for this month.</Text>
@@ -870,10 +870,10 @@ export default function App() {
               <View style={styles.entryContent}>
                 <Text style={styles.entryTitle}>{entry.title}</Text>
                 <Text style={styles.entryMeta}>{getCategoryLabel(entry.category)}</Text>
-                <Text style={styles.entryAmount}>Monthly: {formatMoney(entry.amount)}</Text>
+                <Text style={styles.entryAmount}>Monthly: {displayMoney(entry.amount)}</Text>
                 <Text style={styles.entryAmount}>Hours / day: {entry.hoursPerDay}</Text>
                 <Text style={styles.entryAmount}>
-                  Hourly: {formatHourly(getIncomeHourlyRate(entry, selectedMonth))}
+                  Hourly: {displayHourly(getIncomeHourlyRate(entry, selectedMonth))}
                 </Text>
                 <View style={styles.entryActionRow}>
                   <Pressable style={styles.inlineActionButton} onPress={() => openAddMoney(entry)}>
@@ -895,7 +895,7 @@ export default function App() {
       <View style={[styles.card, styles.listCard]}>
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>OUTFLOW DETAILS</Text>
-          <Text style={styles.sectionTotal}>{formatMoney(activeSnapshot.spending)}</Text>
+          <Text style={styles.sectionTotal}>{displayMoney(activeSnapshot.spending)}</Text>
         </View>
         {activeRecord.spendingEntries.length === 0 ? (
           <Text style={styles.emptyText}>No outflow entries yet for this month.</Text>
@@ -904,7 +904,7 @@ export default function App() {
             <View key={entry.id} style={styles.entryRow}>
               <View style={styles.entryContent}>
                 <Text style={styles.entryTitle}>{entry.title}</Text>
-                <Text style={styles.entryAmount}>{formatMoney(entry.amount)}</Text>
+                <Text style={styles.entryAmount}>{displayMoney(entry.amount)}</Text>
                 <View style={styles.entryActionRow}>
                   <Pressable style={styles.inlineActionButton} onPress={() => openAddOutflowMoney(entry)}>
                     <Text style={styles.inlineActionButtonText}>ADD MONEY</Text>
