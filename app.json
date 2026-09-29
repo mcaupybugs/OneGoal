@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "OneGoal",
+    "slug": "one-goal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.onegoal.app"
+    },
+    "android": {
+      "package": "com.onegoal.app"
+    }
+  }
+}
