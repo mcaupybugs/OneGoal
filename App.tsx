@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Svg, { Circle, G } from "react-native-svg";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,9 +16,11 @@ import {
 } from "react-native";
 
 type IncomeCategory = "salary" | "sideBusiness";
+type AppPage = "cashflow" | "netWorth";
 type ViewMode = "dashboard" | "details" | "income" | "outflow";
 type IncomeFormMode = "create" | "addMoney" | "editHours";
 type OutflowFormMode = "create" | "addMoney";
+type NetWorthFormMode = "create" | "updateValue";
 type CurrencyCode = "INR" | "USD";
 
 type IncomeEntry = {
@@ -39,12 +42,22 @@ type MonthRecord = {
   spendingEntries: SpendingEntry[];
 };
 
+type NetWorthEntry = {
+  id: string;
+  title: string;
+  amount: number;
+};
+
 type Records = Record<string, MonthRecord>;
 
 const STORAGE_KEY = "one-goal-records";
+const NET_WORTH_STORAGE_KEY = "one-goal-net-worth";
 const CURRENCY_STORAGE_KEY = "one-goal-currency";
 const DEFAULT_CURRENCY: CurrencyCode = "INR";
 const USD_TO_INR_RATE = 83;
+const RING_SIZE = 188;
+const RING_STROKE_WIDTH = 22;
+const NET_WORTH_RING_COLORS = ["#111111", "#4f4f4f", "#7a7a7a", "#a0a0a0", "#c2c2c2", "#d6d6d6"];
 
 const monthFormatter = new Intl.DateTimeFormat("en", {
   month: "long",
@@ -120,6 +133,36 @@ const getIncomeMonthlyHours = (entry: IncomeEntry, monthKey: string) =>
 const getIncomeHourlyRate = (entry: IncomeEntry, monthKey: string) => {
   const monthlyHours = getIncomeMonthlyHours(entry, monthKey);
   return monthlyHours > 0 ? entry.amount / monthlyHours : 0;
+};
+
+const normalizeNetWorthEntry = (value: unknown): NetWorthEntry | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<NetWorthEntry>;
+  const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+  const amount = Number(candidate.amount);
+
+  if (!title || !Number.isFinite(amount) || amount < 0) {
+    return null;
+  }
+
+  return {
+    id: typeof candidate.id === "string" && candidate.id ? candidate.id : buildId(),
+    title,
+    amount,
+  };
+};
+
+const normalizeNetWorthEntries = (value: unknown): NetWorthEntry[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(normalizeNetWorthEntry)
+    .filter((entry): entry is NetWorthEntry => entry !== null);
 };
 
 const normalizeSpendingEntry = (value: unknown): SpendingEntry | null => {
@@ -214,19 +257,21 @@ const normalizeRecords = (value: unknown): Records => {
 };
 
 const getMonthSnapshot = (record: MonthRecord, monthKey: string) => {
-  const gross = getTotal(record.incomeEntries);
-  const spending = getTotal(record.spendingEntries);
+  const incomeEntries = Array.isArray(record.incomeEntries) ? record.incomeEntries : [];
+  const spendingEntries = Array.isArray(record.spendingEntries) ? record.spendingEntries : [];
+  const gross = getTotal(incomeEntries);
+  const spending = getTotal(spendingEntries);
   const net = gross - spending;
-  const trackedHours = record.incomeEntries.reduce(
+  const trackedHours = incomeEntries.reduce(
     (sum: number, entry: IncomeEntry) => sum + getIncomeMonthlyHours(entry, monthKey),
     0,
   );
   const grossHourly = trackedHours > 0 ? gross / trackedHours : 0;
   const netHourly = trackedHours > 0 ? net / trackedHours : 0;
-  const salaryIncome = record.incomeEntries
+  const salaryIncome = incomeEntries
     .filter((entry: IncomeEntry) => entry.category === "salary")
     .reduce((sum: number, entry: IncomeEntry) => sum + entry.amount, 0);
-  const sideBusinessIncome = record.incomeEntries
+  const sideBusinessIncome = incomeEntries
     .filter((entry: IncomeEntry) => entry.category === "sideBusiness")
     .reduce((sum: number, entry: IncomeEntry) => sum + entry.amount, 0);
 
@@ -242,8 +287,26 @@ const getMonthSnapshot = (record: MonthRecord, monthKey: string) => {
   };
 };
 
+const getNetWorthSnapshot = (entries: NetWorthEntry[]) => {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const total = getTotal(safeEntries);
+  const sourceTotals = safeEntries.map((entry: NetWorthEntry, index: number) => ({
+    id: entry.id,
+    label: entry.title,
+    color: NET_WORTH_RING_COLORS[index % NET_WORTH_RING_COLORS.length],
+    total: entry.amount,
+  }));
+
+  return {
+    total,
+    sourceTotals,
+  };
+};
+
 export default function App() {
+  const [activePage, setActivePage] = useState<AppPage>("cashflow");
   const [records, setRecords] = useState<Records>({});
+  const [netWorthEntries, setNetWorthEntries] = useState<NetWorthEntry[]>([]);
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
   const [activeView, setActiveView] = useState<ViewMode>("dashboard");
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>(DEFAULT_CURRENCY);
@@ -251,21 +314,26 @@ export default function App() {
   const [selectedIncomeId, setSelectedIncomeId] = useState<string | null>(null);
   const [outflowFormMode, setOutflowFormMode] = useState<OutflowFormMode>("create");
   const [selectedSpendingId, setSelectedSpendingId] = useState<string | null>(null);
+  const [netWorthFormMode, setNetWorthFormMode] = useState<NetWorthFormMode>("create");
+  const [selectedNetWorthId, setSelectedNetWorthId] = useState<string | null>(null);
   const [incomeTitle, setIncomeTitle] = useState("");
   const [incomeAmount, setIncomeAmount] = useState("");
   const [incomeHoursPerDay, setIncomeHoursPerDay] = useState("8");
   const [incomeCategory, setIncomeCategory] = useState<IncomeCategory>("salary");
   const [spendingTitle, setSpendingTitle] = useState("");
   const [spendingAmount, setSpendingAmount] = useState("");
+  const [netWorthTitle, setNetWorthTitle] = useState("");
+  const [netWorthAmount, setNetWorthAmount] = useState("");
   const [isReady, setIsReady] = useState(false);
   const previousCurrencyRef = useRef<CurrencyCode>(DEFAULT_CURRENCY);
 
   useEffect(() => {
     const loadRecords = async () => {
       try {
-        const [rawRecords, rawCurrency] = await Promise.all([
+        const [rawRecords, rawCurrency, rawNetWorth] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY),
           AsyncStorage.getItem(CURRENCY_STORAGE_KEY),
+          AsyncStorage.getItem(NET_WORTH_STORAGE_KEY),
         ]);
 
         if (rawRecords) {
@@ -276,6 +344,11 @@ export default function App() {
         if (rawCurrency === "INR" || rawCurrency === "USD") {
           setSelectedCurrency(rawCurrency);
           previousCurrencyRef.current = rawCurrency;
+        }
+
+        if (rawNetWorth) {
+          const parsedNetWorth = JSON.parse(rawNetWorth) as unknown;
+          setNetWorthEntries(normalizeNetWorthEntries(parsedNetWorth));
         }
       } catch {
         Alert.alert("Storage error", "Could not load your saved monthly history.");
@@ -312,6 +385,16 @@ export default function App() {
   }, [isReady, selectedCurrency]);
 
   useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+
+    AsyncStorage.setItem(NET_WORTH_STORAGE_KEY, JSON.stringify(netWorthEntries)).catch(() => {
+      Alert.alert("Save error", "Could not save your net worth data.");
+    });
+  }, [isReady, netWorthEntries]);
+
+  useEffect(() => {
     const previousCurrency = previousCurrencyRef.current;
 
     if (previousCurrency === selectedCurrency) {
@@ -335,6 +418,7 @@ export default function App() {
 
     setIncomeAmount((current) => convertInputAmount(current));
     setSpendingAmount((current) => convertInputAmount(current));
+    setNetWorthAmount((current) => convertInputAmount(current));
     previousCurrencyRef.current = selectedCurrency;
   }, [selectedCurrency]);
 
@@ -344,9 +428,18 @@ export default function App() {
     [activeRecord, selectedMonth],
   );
   const selectedIncomeEntry =
-    activeRecord.incomeEntries.find((entry: IncomeEntry) => entry.id === selectedIncomeId) ?? null;
+    (Array.isArray(activeRecord.incomeEntries) ? activeRecord.incomeEntries : []).find(
+      (entry: IncomeEntry) => entry.id === selectedIncomeId,
+    ) ?? null;
   const selectedSpendingEntry =
-    activeRecord.spendingEntries.find((entry: SpendingEntry) => entry.id === selectedSpendingId) ?? null;
+    (Array.isArray(activeRecord.spendingEntries) ? activeRecord.spendingEntries : []).find(
+      (entry: SpendingEntry) => entry.id === selectedSpendingId,
+    ) ?? null;
+  const selectedNetWorthEntry =
+    (Array.isArray(netWorthEntries) ? netWorthEntries : []).find(
+      (entry: NetWorthEntry) => entry.id === selectedNetWorthId,
+    ) ?? null;
+  const netWorthSnapshot = useMemo(() => getNetWorthSnapshot(netWorthEntries), [netWorthEntries]);
   const displayMoney = (value: number) => formatMoneyForCurrency(value, selectedCurrency);
   const displayHourly = (value: number) => formatHourlyForCurrency(value, selectedCurrency);
 
@@ -383,6 +476,17 @@ export default function App() {
     setActiveView("outflow");
   };
 
+  const resetNetWorthForm = () => {
+    setNetWorthFormMode("create");
+    setSelectedNetWorthId(null);
+    setNetWorthTitle("");
+    setNetWorthAmount("");
+  };
+
+  const openCreateNetWorth = () => {
+    resetNetWorthForm();
+  };
+
   const openAddMoney = (entry: IncomeEntry) => {
     setIncomeFormMode("addMoney");
     setSelectedIncomeId(entry.id);
@@ -409,6 +513,13 @@ export default function App() {
     setSpendingTitle(entry.title);
     setSpendingAmount("");
     setActiveView("outflow");
+  };
+
+  const openUpdateNetWorthValue = (entry: NetWorthEntry) => {
+    setNetWorthFormMode("updateValue");
+    setSelectedNetWorthId(entry.id);
+    setNetWorthTitle(entry.title);
+    setNetWorthAmount(formatEditableAmount(fromBaseCurrency(entry.amount, selectedCurrency)));
   };
 
   const submitIncome = () => {
@@ -554,6 +665,66 @@ export default function App() {
     setActiveView("details");
   };
 
+  const submitNetWorth = () => {
+    if (netWorthFormMode === "updateValue") {
+      if (!selectedNetWorthEntry) {
+        Alert.alert("Missing source", "That net worth source could not be found.");
+        resetNetWorthForm();
+        return;
+      }
+
+      const displayAmount = parseCurrencyInput(netWorthAmount);
+
+      if (!Number.isFinite(displayAmount) || displayAmount < 0) {
+        Alert.alert("Invalid amount", "Enter a valid current value for this source.");
+        return;
+      }
+
+      const amount = toBaseCurrency(displayAmount, selectedCurrency);
+
+      setNetWorthEntries((current: NetWorthEntry[]) =>
+        current.map((entry: NetWorthEntry) =>
+          entry.id === selectedNetWorthEntry.id ? { ...entry, amount } : entry,
+        ),
+      );
+
+      resetNetWorthForm();
+      return;
+    }
+
+    const title = netWorthTitle.trim();
+    const displayAmount = parseCurrencyInput(netWorthAmount);
+
+    if (!title) {
+      Alert.alert("Missing source", "Add a name for this net worth source.");
+      return;
+    }
+
+    if (!Number.isFinite(displayAmount) || displayAmount < 0) {
+      Alert.alert("Invalid amount", "Enter a valid current value for this source.");
+      return;
+    }
+
+    const amount = toBaseCurrency(displayAmount, selectedCurrency);
+
+    setNetWorthEntries((current: NetWorthEntry[]) => [
+      {
+        id: buildId(),
+        title,
+        amount,
+      },
+      ...current,
+    ]);
+
+    resetNetWorthForm();
+  };
+
+  const deleteNetWorthEntry = (entryId: string) => {
+    setNetWorthEntries((current: NetWorthEntry[]) =>
+      current.filter((entry: NetWorthEntry) => entry.id !== entryId),
+    );
+  };
+
   const deleteIncome = (entryId: string) => {
     setRecords((current: Records) => {
       const record = current[selectedMonth] ?? createMonthRecord();
@@ -596,15 +767,6 @@ export default function App() {
 
   const renderDashboard = () => (
     <>
-      <View style={[styles.card, styles.heroCard]}>
-        <Text style={styles.kicker}>ONE GOAL</Text>
-        <Text style={styles.title}>Dashboard first. Input later.</Text>
-        <Text style={styles.subtitle}>
-          Track monthly inflow and outflow, then see gross and net hourly income from your salary
-          and side business sources.
-        </Text>
-      </View>
-
       <View style={styles.metricGrid}>
         <View style={[styles.card, styles.metricCard, styles.tiltLeft]}>
           <Text style={styles.metricLabel}>Monthly Inflow</Text>
@@ -922,6 +1084,169 @@ export default function App() {
     </>
   );
 
+  const renderNetWorthPage = () => {
+    const radius = (RING_SIZE - RING_STROKE_WIDTH) / 2;
+    const circumference = 2 * Math.PI * radius;
+    let progressOffset = 0;
+
+    const ringSegments = (netWorthSnapshot.sourceTotals ?? [])
+      .filter((item) => item.total > 0 && netWorthSnapshot.total > 0)
+      .map((item) => {
+        const segmentLength = (item.total / netWorthSnapshot.total) * circumference;
+        const segment = {
+          ...item,
+          segmentLength,
+          dashOffset: -progressOffset,
+        };
+
+        progressOffset += segmentLength;
+        return segment;
+      });
+
+    return (
+      <>
+        <View style={[styles.card, styles.netWorthSummaryCard]}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionLabel}>NET WORTH</Text>
+            <Pressable
+              style={styles.currencyToggleButton}
+              onPress={() => setSelectedCurrency(selectedCurrency === "INR" ? "USD" : "INR")}
+            >
+              <Text style={styles.currencyToggleText}>{selectedCurrency}</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.netWorthTotalLabel}>Total Net Worth</Text>
+          <Text style={styles.netWorthTotalValue}>{displayMoney(netWorthSnapshot.total)}</Text>
+          <View style={styles.ringWrap}>
+            <Svg width={RING_SIZE} height={RING_SIZE}>
+              <G rotation="-90" origin={`${RING_SIZE / 2}, ${RING_SIZE / 2}`}>
+                <Circle
+                  cx={RING_SIZE / 2}
+                  cy={RING_SIZE / 2}
+                  r={radius}
+                  stroke="#d8d8d8"
+                  strokeWidth={RING_STROKE_WIDTH}
+                  fill="none"
+                />
+                {ringSegments.map((segment) => (
+                  <Circle
+                    key={segment.id}
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
+                    r={radius}
+                    stroke={segment.color}
+                    strokeWidth={RING_STROKE_WIDTH}
+                    fill="none"
+                    strokeDasharray={`${segment.segmentLength} ${circumference}`}
+                    strokeDashoffset={segment.dashOffset}
+                  />
+                ))}
+              </G>
+            </Svg>
+            <View style={styles.ringCenterLabel}>
+              <Text style={styles.ringCenterTitle}>Assets</Text>
+              <Text style={styles.ringCenterValue}>{netWorthEntries.length}</Text>
+            </View>
+          </View>
+          <View style={styles.netWorthLegendList}>
+            {(netWorthSnapshot.sourceTotals ?? []).map((item) => (
+              <View key={item.id} style={styles.legendRow}>
+                <View style={styles.legendLabelRow}>
+                  <View style={[styles.legendSwatch, { backgroundColor: item.color }]} />
+                  <Text style={styles.legendText}>{item.label}</Text>
+                </View>
+                <View style={styles.legendValues}>
+                  <Text style={styles.legendAmount}>{displayMoney(item.total)}</Text>
+                  <Text style={styles.legendShare}>
+                    {netWorthSnapshot.total > 0 ? `${Math.round((item.total / netWorthSnapshot.total) * 100)}%` : "0%"}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        <View style={[styles.card, styles.formCard]}>
+          <Text style={styles.sectionLabel}>
+            {netWorthFormMode === "create" ? "ADD SOURCE" : "UPDATE VALUE"}
+          </Text>
+          <Text style={styles.helperText}>
+            {netWorthFormMode === "create"
+              ? "Track current values across any assets or sources you want."
+              : "Update the latest value for this source."}
+          </Text>
+          {netWorthFormMode === "create" ? (
+            <>
+              <TextInput
+                value={netWorthTitle}
+                onChangeText={setNetWorthTitle}
+                placeholder="Source name, asset name, or account"
+                placeholderTextColor="#7a7a7a"
+                style={styles.input}
+              />
+            </>
+          ) : (
+            <View style={styles.focusBox}>
+              <Text style={styles.focusTitle}>{selectedNetWorthEntry?.title ?? netWorthTitle}</Text>
+              {selectedNetWorthEntry ? (
+                <Text style={styles.focusText}>
+                  Current value: {displayMoney(selectedNetWorthEntry.amount)}
+                </Text>
+              ) : null}
+            </View>
+          )}
+          <TextInput
+            value={netWorthAmount}
+            onChangeText={setNetWorthAmount}
+            keyboardType="decimal-pad"
+            placeholder={netWorthFormMode === "create" ? "Current value" : "Updated value"}
+            placeholderTextColor="#7a7a7a"
+            style={styles.input}
+          />
+          <View style={styles.formActionRow}>
+            <Pressable style={styles.secondaryButton} onPress={openCreateNetWorth}>
+              <Text style={styles.secondaryButtonText}>
+                {netWorthFormMode === "create" ? "CLEAR" : "CANCEL"}
+              </Text>
+            </Pressable>
+            <Pressable style={styles.actionButton} onPress={submitNetWorth}>
+              <Text style={styles.actionButtonText}>
+                {netWorthFormMode === "create" ? "SAVE SOURCE" : "SAVE VALUE"}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={[styles.card, styles.listCard]}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionLabel}>ASSET SOURCES</Text>
+            <Text style={styles.sectionTotal}>{netWorthEntries.length}</Text>
+          </View>
+          {netWorthEntries.length === 0 ? (
+            <Text style={styles.emptyText}>No net worth sources yet.</Text>
+          ) : (
+            netWorthEntries.map((entry: NetWorthEntry) => (
+              <View key={entry.id} style={styles.entryRow}>
+                <View style={styles.entryContent}>
+                  <Text style={styles.entryTitle}>{entry.title}</Text>
+                  <Text style={styles.entryAmount}>{displayMoney(entry.amount)}</Text>
+                  <View style={styles.entryActionRow}>
+                    <Pressable style={styles.inlineActionButton} onPress={() => openUpdateNetWorthValue(entry)}>
+                      <Text style={styles.inlineActionButtonText}>UPDATE VALUE</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                <Pressable onPress={() => deleteNetWorthEntry(entry.id)} style={styles.deleteButton}>
+                  <Text style={styles.deleteText}>X</Text>
+                </Pressable>
+              </View>
+            ))
+          )}
+        </View>
+      </>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -930,77 +1255,103 @@ export default function App() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.topUtilityRow}>
-            <Pressable
-              style={styles.currencyToggleButton}
-              onPress={() => setSelectedCurrency(selectedCurrency === "INR" ? "USD" : "INR")}
-            >
-              <Text style={styles.currencyToggleText}>{selectedCurrency}</Text>
-            </Pressable>
-          </View>
-
-          <View style={[styles.card, styles.monthCard]}>
-            <Text style={styles.sectionLabel}>MONTH</Text>
-            <View style={styles.monthRow}>
-              <Pressable
-                style={styles.navButton}
-                onPress={() => setSelectedMonth(shiftMonth(selectedMonth, -1))}
-              >
-                <Text style={styles.navButtonText}>PREV</Text>
-              </Pressable>
-              <Text style={styles.monthTitle}>{toMonthLabel(selectedMonth)}</Text>
-              <Pressable
-                style={styles.navButton}
-                onPress={() => setSelectedMonth(shiftMonth(selectedMonth, 1))}
-              >
-                <Text style={styles.navButtonText}>NEXT</Text>
-              </Pressable>
-            </View>
-          </View>
-
-          <View style={[styles.card, styles.tabCard]}>
+          <View style={[styles.card, styles.pageCard]}>
             <View style={styles.tabRow}>
               <Pressable
-                style={[styles.tabButton, activeView === "dashboard" && styles.tabButtonActive]}
-                onPress={() => setActiveView("dashboard")}
+                style={[styles.tabButton, activePage === "cashflow" && styles.tabButtonActive]}
+                onPress={() => setActivePage("cashflow")}
               >
-                <Text style={[styles.tabText, activeView === "dashboard" && styles.tabTextActive]}>
-                  DASHBOARD
+                <Text style={[styles.tabText, activePage === "cashflow" && styles.tabTextActive]}>
+                  CASHFLOW
                 </Text>
               </Pressable>
               <Pressable
-                style={[styles.tabButton, activeView === "details" && styles.tabButtonActive]}
-                onPress={() => setActiveView("details")}
+                style={[styles.tabButton, activePage === "netWorth" && styles.tabButtonActive]}
+                onPress={() => setActivePage("netWorth")}
               >
-                <Text style={[styles.tabText, activeView === "details" && styles.tabTextActive]}>
-                  DETAILS
-                </Text>
-              </Pressable>
-            </View>
-            <View style={styles.tabRow}>
-              <Pressable
-                style={[styles.tabButton, activeView === "income" && styles.tabButtonActive]}
-                onPress={() => setActiveView("income")}
-              >
-                <Text style={[styles.tabText, activeView === "income" && styles.tabTextActive]}>
-                  ADD INCOME
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.tabButton, activeView === "outflow" && styles.tabButtonActive]}
-                onPress={() => setActiveView("outflow")}
-              >
-                <Text style={[styles.tabText, activeView === "outflow" && styles.tabTextActive]}>
-                  ADD OUTFLOW
+                <Text style={[styles.tabText, activePage === "netWorth" && styles.tabTextActive]}>
+                  NET WORTH
                 </Text>
               </Pressable>
             </View>
           </View>
 
-          {activeView === "dashboard" && renderDashboard()}
-          {activeView === "details" && renderDetails()}
-          {activeView === "income" && renderIncomeForm()}
-          {activeView === "outflow" && renderOutflowForm()}
+          {activePage === "cashflow" ? (
+            <>
+              <View style={[styles.card, styles.monthCard]}>
+                <View style={styles.monthHeaderRow}>
+                  <Text style={styles.sectionLabel}>MONTH</Text>
+                  <Pressable
+                    style={styles.currencyToggleButton}
+                    onPress={() => setSelectedCurrency(selectedCurrency === "INR" ? "USD" : "INR")}
+                  >
+                    <Text style={styles.currencyToggleText}>{selectedCurrency}</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.monthRow}>
+                  <Pressable
+                    style={styles.navButton}
+                    onPress={() => setSelectedMonth(shiftMonth(selectedMonth, -1))}
+                  >
+                    <Text style={styles.navButtonText}>PREV</Text>
+                  </Pressable>
+                  <Text style={styles.monthTitle}>{toMonthLabel(selectedMonth)}</Text>
+                  <Pressable
+                    style={styles.navButton}
+                    onPress={() => setSelectedMonth(shiftMonth(selectedMonth, 1))}
+                  >
+                    <Text style={styles.navButtonText}>NEXT</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={[styles.card, styles.tabCard]}>
+                <View style={styles.tabRow}>
+                  <Pressable
+                    style={[styles.tabButton, activeView === "dashboard" && styles.tabButtonActive]}
+                    onPress={() => setActiveView("dashboard")}
+                  >
+                    <Text style={[styles.tabText, activeView === "dashboard" && styles.tabTextActive]}>
+                      DASHBOARD
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.tabButton, activeView === "details" && styles.tabButtonActive]}
+                    onPress={() => setActiveView("details")}
+                  >
+                    <Text style={[styles.tabText, activeView === "details" && styles.tabTextActive]}>
+                      DETAILS
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.tabRow}>
+                  <Pressable
+                    style={[styles.tabButton, activeView === "income" && styles.tabButtonActive]}
+                    onPress={() => setActiveView("income")}
+                  >
+                    <Text style={[styles.tabText, activeView === "income" && styles.tabTextActive]}>
+                      ADD INCOME
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.tabButton, activeView === "outflow" && styles.tabButtonActive]}
+                    onPress={() => setActiveView("outflow")}
+                  >
+                    <Text style={[styles.tabText, activeView === "outflow" && styles.tabTextActive]}>
+                      ADD OUTFLOW
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {activeView === "dashboard" && renderDashboard()}
+              {activeView === "details" && renderDetails()}
+              {activeView === "income" && renderIncomeForm()}
+              {activeView === "outflow" && renderOutflowForm()}
+            </>
+          ) : (
+            renderNetWorthPage()
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -1033,39 +1384,22 @@ const styles = StyleSheet.create({
     shadowRadius: 0,
     elevation: 5,
   },
-  heroCard: {
-    backgroundColor: "#ffffff",
-  },
-  topUtilityRow: {
+  monthHeaderRow: {
     flexDirection: "row",
-    justifyContent: "flex-end",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   monthCard: {
     gap: 12,
   },
+  pageCard: {
+    gap: 10,
+  },
   tabCard: {
     gap: 10,
   },
-  kicker: {
-    fontSize: 13,
-    fontWeight: "900",
-    letterSpacing: 2,
-    color: "#111111",
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 31,
-    lineHeight: 36,
-    fontWeight: "900",
-    color: "#111111",
-    textTransform: "uppercase",
-  },
-  subtitle: {
-    marginTop: 10,
-    fontSize: 15,
-    lineHeight: 22,
-    color: "#2f2f2f",
-    fontWeight: "700",
+  netWorthSummaryCard: {
+    gap: 14,
   },
   sectionLabel: {
     fontSize: 13,
@@ -1101,17 +1435,94 @@ const styles = StyleSheet.create({
   currencyToggleButton: {
     borderWidth: 2,
     borderColor: "#111111",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     alignItems: "center",
     backgroundColor: "#111111",
   },
   currencyToggleText: {
     color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+  },
+  netWorthTotalLabel: {
     fontSize: 13,
     fontWeight: "900",
-    letterSpacing: 0.8,
+    color: "#555555",
+    textTransform: "uppercase",
+  },
+  netWorthTotalValue: {
+    fontSize: 32,
+    fontWeight: "900",
+    color: "#111111",
+  },
+  ringWrap: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringCenterLabel: {
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringCenterTitle: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#555555",
+    textTransform: "uppercase",
+  },
+  ringCenterValue: {
+    marginTop: 4,
+    fontSize: 28,
+    fontWeight: "900",
+    color: "#111111",
+  },
+  netWorthLegendList: {
+    gap: 10,
+  },
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  legendLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  legendSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: "#111111",
+  },
+  legendText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111111",
+    textTransform: "uppercase",
+  },
+  legendValues: {
+    alignItems: "flex-end",
+  },
+  legendAmount: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111111",
+  },
+  legendShare: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#555555",
   },
   navButton: {
     borderWidth: 2,
